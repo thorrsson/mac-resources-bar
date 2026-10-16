@@ -168,14 +168,39 @@ final class DiskIOSampler {
     }
 }
 
+struct Volume {
+    let path: String
+    let name: String
+    let used: UInt64
+    let total: UInt64
+    var fraction: Double { total > 0 ? Double(used) / Double(total) : 0 }
+}
+
+/// Space usage for every visible local volume (startup disk, external drives, mounted images).
+/// Network shares are skipped so a stale server can never stall the UI.
 enum DiskSpaceSampler {
-    static func sample() -> (used: UInt64, total: UInt64)? {
-        let keys: Set<URLResourceKey> = [.volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey]
-        guard let v = try? URL(fileURLWithPath: "/").resourceValues(forKeys: keys),
-              let total = v.volumeTotalCapacity, let avail = v.volumeAvailableCapacityForImportantUsage,
-              total > 0 else { return nil }
-        let t = UInt64(total), a = UInt64(max(0, avail))
-        return (t - min(a, t), t)
+    private static let keys: [URLResourceKey] = [
+        .volumeNameKey, .volumeIsLocalKey, .volumeTotalCapacityKey,
+        .volumeAvailableCapacityKey, .volumeAvailableCapacityForImportantUsageKey,
+    ]
+
+    static func sample() -> [Volume] {
+        let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys,
+                                                         options: [.skipHiddenVolumes]) ?? []
+        var volumes: [Volume] = []
+        for url in urls {
+            guard let v = try? url.resourceValues(forKeys: Set(keys)),
+                  v.volumeIsLocal == true,
+                  let total = v.volumeTotalCapacity, total > 0 else { continue }
+            // "Important usage" counts purgeable space as free (like Finder) but reports 0 on some
+            // filesystems (e.g. read-only images), so take whichever is larger.
+            let avail = max(Int(v.volumeAvailableCapacityForImportantUsage ?? 0), v.volumeAvailableCapacity ?? 0)
+            let t = UInt64(total), a = UInt64(max(0, avail))
+            volumes.append(Volume(path: url.path, name: v.volumeName ?? url.lastPathComponent,
+                                  used: t - min(a, t), total: t))
+        }
+        // Startup disk first, then alphabetical.
+        return volumes.sorted { ($0.path == "/" ? 0 : 1, $0.name) < ($1.path == "/" ? 0 : 1, $1.name) }
     }
 }
 
@@ -191,7 +216,7 @@ private struct Snapshot {
     var cpuUser = 0.0, cpuSystem = 0.0
     var memUsed: UInt64 = 0, swapUsed: UInt64 = 0
     var netIn = 0.0, netOut = 0.0
-    var diskUsed: UInt64 = 0, diskTotal: UInt64 = 0
+    var volumes: [Volume] = []
     var diskRead = 0.0, diskWrite = 0.0
     var ready = false
 }
@@ -200,7 +225,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private let cpuItem = NSMenuItem(), memItem = NSMenuItem(), swapItem = NSMenuItem()
-    private let netItem = NSMenuItem(), diskItem = NSMenuItem(), diskIOItem = NSMenuItem()
+    private let netItem = NSMenuItem(), diskIOItem = NSMenuItem()
+    private var volumeItems: [NSMenuItem] = []
+    private let barDiskMenu = NSMenu()
     private var metricItems: [NSMenuItem] = []
     private var intervalItems: [NSMenuItem] = []
     private let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLogin(_:)), keyEquivalent: "")
@@ -227,6 +254,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let ws = NSWorkspace.shared.notificationCenter
         ws.addObserver(self, selector: #selector(stopTimer), name: NSWorkspace.screensDidSleepNotification, object: nil)
         ws.addObserver(self, selector: #selector(startTimer), name: NSWorkspace.screensDidWakeNotification, object: nil)
+        ws.addObserver(self, selector: #selector(volumesChanged), name: NSWorkspace.didMountNotification, object: nil)
+        ws.addObserver(self, selector: #selector(volumesChanged), name: NSWorkspace.didUnmountNotification, object: nil)
+        ws.addObserver(self, selector: #selector(volumesChanged), name: NSWorkspace.didRenameVolumeNotification, object: nil)
 
         tick()  // prime delta-based samplers
         startTimer()
@@ -256,14 +286,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let m = MemorySampler.sample() { snap.memUsed = m.used; snap.swapUsed = m.swap }
         if let n = net.sample() { snap.netIn = Double(n.inBytes) / elapsed; snap.netOut = Double(n.outBytes) / elapsed }
         if let d = diskIO.sample() { snap.diskRead = Double(d.read) / elapsed; snap.diskWrite = Double(d.write) / elapsed }
-        if now - lastDiskSpace >= 30, let s = DiskSpaceSampler.sample() {
-            snap.diskUsed = s.used; snap.diskTotal = s.total
-            lastDiskSpace = now
-        }
+        if now - lastDiskSpace >= 30 { refreshVolumes(now) }
 
         guard snap.ready else { return }
         updateTitle()
         if menuOpen { updateMenu() }
+    }
+
+    private func refreshVolumes(_ now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        let old = snap.volumes.map { "\($0.path)|\($0.name)" }
+        snap.volumes = DiskSpaceSampler.sample()
+        lastDiskSpace = now
+        if snap.volumes.map({ "\($0.path)|\($0.name)" }) != old || volumeItems.isEmpty { rebuildVolumeItems() }
+    }
+
+    @objc private func volumesChanged() {
+        refreshVolumes()
+        guard snap.ready else { return }
+        updateTitle()
+        if menuOpen { updateMenu() }
+    }
+
+    private var barDiskPath: String { defaults.string(forKey: "barDisk") ?? "/" }
+
+    /// The volume shown in the menu bar; falls back to the startup disk if the chosen one is unmounted.
+    private var barVolume: Volume? {
+        snap.volumes.first { $0.path == barDiskPath } ?? snap.volumes.first { $0.path == "/" }
     }
 
     private func isShown(_ m: Metric) -> Bool { defaults.bool(forKey: m.defaultsKey) }
@@ -273,7 +321,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if isShown(.cpu) { parts.append("CPU" + percent(snap.cpuUser + snap.cpuSystem)) }
         if isShown(.memory) { parts.append("MEM " + compactBytes(snap.memUsed)) }
         if isShown(.network) { parts.append("↓" + compactRate(snap.netIn) + " ↑" + compactRate(snap.netOut)) }
-        if isShown(.disk), snap.diskTotal > 0 { parts.append("DSK" + percent(Double(snap.diskUsed) / Double(snap.diskTotal))) }
+        if isShown(.disk), let v = barVolume {
+            let label = v.path == "/" ? "DSK" : String(v.name.prefix(8)) + " "
+            parts.append(label + percent(v.fraction))
+        }
         let title = parts.isEmpty ? "RB" : parts.joined(separator: "  ")
         if statusItem.button?.title != title { statusItem.button?.title = title }
     }
@@ -286,11 +337,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                mem(snap.memUsed), mem(total), Double(snap.memUsed) / Double(total) * 100)
         swapItem.title = "Swap used: " + mem(snap.swapUsed)
         netItem.title = "Network: ↓ \(rate(snap.netIn))   ↑ \(rate(snap.netOut))"
-        if snap.diskTotal > 0 {
-            diskItem.title = String(format: "Disk: %@ of %@ used  (%@ free)",
-                                    file(snap.diskUsed), file(snap.diskTotal), file(snap.diskTotal - snap.diskUsed))
+        for (item, v) in zip(volumeItems, snap.volumes) {
+            item.title = String(format: "%@: %@ of %@ used  (%@ free, %.0f%%)",
+                                v.name, file(v.used), file(v.total), file(v.total - v.used), v.fraction * 100)
         }
-        diskIOItem.title = "Disk I/O: read \(rate(snap.diskRead))   write \(rate(snap.diskWrite))"
+        diskIOItem.title = "Disk I/O (all disks): read \(rate(snap.diskRead))   write \(rate(snap.diskWrite))"
+    }
+
+    /// Recreates the per-volume rows and the "Menu Bar Disk" picker after mounts/unmounts.
+    private func rebuildVolumeItems() {
+        volumeItems.forEach { menu.removeItem($0) }
+        volumeItems = snap.volumes.map { _ in NSMenuItem(title: "…", action: nil, keyEquivalent: "") }
+        if volumeItems.isEmpty { volumeItems = [NSMenuItem(title: "Disks: none", action: nil, keyEquivalent: "")] }
+        var index = menu.index(of: diskIOItem)
+        for item in volumeItems {
+            menu.insertItem(item, at: index)
+            index += 1
+        }
+
+        barDiskMenu.removeAllItems()
+        let selected = barVolume?.path
+        for v in snap.volumes {
+            let item = NSMenuItem(title: v.name, action: #selector(selectBarDisk(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = v.path
+            item.state = v.path == selected ? .on : .off
+            barDiskMenu.addItem(item)
+        }
+    }
+
+    @objc private func selectBarDisk(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        defaults.set(path, forKey: "barDisk")
+        barDiskMenu.items.forEach { $0.state = $0 === sender ? .on : .off }
+        updateTitle()
     }
 
     // MARK: Menu
@@ -298,7 +378,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func buildMenu() {
         menu.autoenablesItems = false
         menu.delegate = self
-        for item in [cpuItem, memItem, swapItem, netItem, diskItem, diskIOItem] {
+        for item in [cpuItem, memItem, swapItem, netItem, diskIOItem] {
             item.title = "…"
             menu.addItem(item)
         }
@@ -316,6 +396,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let showItem = NSMenuItem(title: "Show in Menu Bar", action: nil, keyEquivalent: "")
         showItem.submenu = showMenu
         menu.addItem(showItem)
+
+        let barDiskItem = NSMenuItem(title: "Menu Bar Disk", action: nil, keyEquivalent: "")
+        barDiskItem.submenu = barDiskMenu
+        menu.addItem(barDiskItem)
 
         let intervalMenu = NSMenu()
         for secs in [1, 2, 5, 10] {
