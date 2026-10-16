@@ -103,6 +103,9 @@ jobs:
           NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
           NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
           REQUIRE_NOTARIZATION: '1'
+          REQUIRE_SPARKLE: '1'
+          SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
           VERSION: ${{ steps.version.outputs.version }}
         run: ./Scripts/release.sh "$VERSION"
 
@@ -119,6 +122,7 @@ jobs:
           path: |
             dist/*.dmg
             dist/*.dmg.sha256
+            dist/appcast.xml
           if-no-files-found: error
 
       - name: Publish GitHub release
@@ -128,9 +132,9 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/*.dmg dist/*.dmg.sha256 --clobber
+            gh release upload "$GITHUB_REF_NAME" dist/*.dmg dist/*.dmg.sha256 dist/appcast.xml --clobber
           else
-            gh release create "$GITHUB_REF_NAME" dist/*.dmg dist/*.dmg.sha256 \
+            gh release create "$GITHUB_REF_NAME" dist/*.dmg dist/*.dmg.sha256 dist/appcast.xml \
               --title "ResourcesBar ${GITHUB_REF_NAME#v}" \
               --generate-notes \
               --verify-tag

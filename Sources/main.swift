@@ -1,6 +1,9 @@
 import AppKit
 import IOKit
 import ServiceManagement
+#if !TESTING
+import Sparkle
+#endif
 
 private let hostPort = mach_host_self()
 
@@ -308,6 +311,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var metricItems: [NSMenuItem] = []
     private var intervalItems: [NSMenuItem] = []
     private let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLogin(_:)), keyEquivalent: "")
+#if !TESTING
+    private var updaterController: SPUStandardUpdaterController?
+    private let checkForUpdatesItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+    private let automaticUpdatesItem = NSMenuItem(title: "Automatically Check for Updates", action: #selector(toggleAutomaticUpdates(_:)), keyEquivalent: "")
+#endif
 
     private let cpu = CPUSampler(), net = NetworkSampler(), diskIO = DiskIOSampler()
     private var snap = Snapshot()
@@ -325,6 +333,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         defaults.register(defaults: Dictionary(uniqueKeysWithValues: Metric.allCases.map { ($0.defaultsKey, true) }))
         statusItem.button?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         statusItem.button?.title = "…"
+#if !TESTING
+        if let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String,
+           Data(base64Encoded: key)?.count == 32 {
+            updaterController = SPUStandardUpdaterController(
+                startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil
+            )
+        } else {
+            NSLog("ResourcesBar: updates disabled because SUPublicEDKey is missing or invalid.")
+        }
+#endif
         buildMenu()
         statusItem.menu = menu
 
@@ -509,16 +527,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         loginItem.target = self
         menu.addItem(loginItem)
         menu.addItem(.separator())
+#if !TESTING
+        checkForUpdatesItem.target = self
+        automaticUpdatesItem.target = self
+        checkForUpdatesItem.isEnabled = false
+        automaticUpdatesItem.isEnabled = updaterController != nil
+        menu.addItem(checkForUpdatesItem)
+        menu.addItem(automaticUpdatesItem)
+        menu.addItem(.separator())
+#endif
         menu.addItem(NSMenuItem(title: "Quit ResourcesBar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
     func menuWillOpen(_ menu: NSMenu) {
         menuOpen = true
+#if !TESTING
+        checkForUpdatesItem.isEnabled = updaterController?.updater.canCheckForUpdates ?? false
+        automaticUpdatesItem.state = updaterController?.updater.automaticallyChecksForUpdates == true ? .on : .off
+#endif
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         updateMenu()
     }
 
     func menuDidClose(_ menu: NSMenu) { menuOpen = false }
+
+#if !TESTING
+    @objc private func checkForUpdates(_ sender: NSMenuItem) {
+        updaterController?.checkForUpdates(sender)
+    }
+
+    @objc private func toggleAutomaticUpdates(_ sender: NSMenuItem) {
+        guard let updater = updaterController?.updater else { return }
+        updater.automaticallyChecksForUpdates.toggle()
+        sender.state = updater.automaticallyChecksForUpdates ? .on : .off
+    }
+#endif
 
     @objc private func toggleMetric(_ sender: NSMenuItem) {
         guard let m = Metric(rawValue: sender.tag) else { return }

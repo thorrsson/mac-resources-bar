@@ -67,6 +67,8 @@ required_secrets=(
     NOTARY_API_KEY_ID
     NOTARY_API_ISSUER_ID
     NOTARY_API_KEY_P8
+    SPARKLE_PUBLIC_ED_KEY
+    SPARKLE_PRIVATE_ED_KEY
 )
 allowed_names=" ${required_secrets[*]} "
 seen_names=" "
