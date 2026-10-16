@@ -6,6 +6,9 @@ A tiny macOS menu bar monitor for **CPU, Memory, Network and Disk**.
 CPU 11%  MEM 15.7G  ↓ 31K ↑259K  DSK 77%
 ```
 
+Menu bar labels (including network arrows and disk names) share the standard
+appearance-aware text color; all metric values are blue.
+
 Click the item for details: CPU user/system, memory and swap, network rates, space for **every mounted disk** (startup disk, external drives, mounted disk images), and total disk I/O. The menu also lets you choose which metrics appear in the menu bar, pick which disk the menu bar shows (**Menu Bar Disk**), change the update interval, and turn on launch at login.
 
 ## Why it's light

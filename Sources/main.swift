@@ -16,6 +16,17 @@ private func percent(_ v: Double) -> String {
     padLeft("\(Int((v * 100).rounded()))%", 4)
 }
 
+private func coloredReading(_ label: String, _ value: String) -> NSAttributedString {
+    let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+    let text = NSMutableAttributedString(string: label, attributes: [
+        .font: font, .foregroundColor: NSColor.labelColor,
+    ])
+    text.append(NSAttributedString(string: value, attributes: [
+        .font: font, .foregroundColor: NSColor.systemBlue,
+    ]))
+    return text
+}
+
 private func compactRate(_ bytesPerSec: Double) -> String {
     let k = bytesPerSec / 1024
     if k < 999.5 { return padLeft(String(format: "%.0fK", k), 4) }
@@ -317,16 +328,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func isShown(_ m: Metric) -> Bool { defaults.bool(forKey: m.defaultsKey) }
 
     private func updateTitle() {
-        var parts: [String] = []
-        if isShown(.cpu) { parts.append("CPU" + percent(snap.cpuUser + snap.cpuSystem)) }
-        if isShown(.memory) { parts.append("MEM " + compactBytes(snap.memUsed)) }
-        if isShown(.network) { parts.append("↓" + compactRate(snap.netIn) + " ↑" + compactRate(snap.netOut)) }
+        let title = NSMutableAttributedString(string: "")
+        func append(_ label: String, _ value: String, separator: String = "  ") {
+            if title.length > 0 {
+                title.append(coloredReading(separator, ""))
+            }
+            title.append(coloredReading(label, value))
+        }
+        if isShown(.cpu) { append("CPU", percent(snap.cpuUser + snap.cpuSystem)) }
+        if isShown(.memory) { append("MEM ", compactBytes(snap.memUsed)) }
+        if isShown(.network) {
+            append("↓", compactRate(snap.netIn))
+            append("↑", compactRate(snap.netOut), separator: " ")
+        }
         if isShown(.disk), let v = barVolume {
             let label = v.path == "/" ? "DSK" : String(v.name.prefix(8)) + " "
-            parts.append(label + percent(v.fraction))
+            append(label, percent(v.fraction))
         }
-        let title = parts.isEmpty ? "RB" : parts.joined(separator: "  ")
-        if statusItem.button?.title != title { statusItem.button?.title = title }
+        if title.length == 0 { title.append(coloredReading("RB", "")) }
+        if let button = statusItem.button, !button.attributedTitle.isEqual(to: title) {
+            button.attributedTitle = title
+        }
     }
 
     private func updateMenu() {
