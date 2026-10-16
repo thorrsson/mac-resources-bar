@@ -31,8 +31,17 @@ open build/ResourcesBar.app
 
 "Launch at Login" works best once the app is in `/Applications`.
 
+Run `sh test.sh` for sampler regression tests and a live sampling smoke test.
+The tests cover device addition/removal, counter resets, failed-read recovery,
+and filtering remote or hidden mounts before querying capacity.
+
 ## Notes
 
 - Memory "used" matches Activity Monitor: app memory + wired + compressed.
 - Network counts physical interfaces only (`en*`, cellular). This avoids counting VPN traffic twice.
+- Network and disk I/O deltas are tracked per device. Newly connected devices
+  are primed without counting lifetime traffic; failed reads clear baselines
+  so recovery does not inflate rates.
 - Disks: all visible local volumes are listed, and network shares are skipped so an unresponsive server can't stall the app. Purgeable space counts as free, the same way Finder does. If the selected menu bar disk is ejected, the menu bar falls back to the startup disk.
+- Mounts are filtered using cached kernel mount flags (`MNT_NOWAIT`) before
+  reading volume names or capacity; remote volumes receive no resource queries.

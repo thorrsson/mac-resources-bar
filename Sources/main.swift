@@ -70,6 +70,27 @@ private func rate(_ v: Double) -> String { fileFormatter.string(fromByteCount: I
 
 private func delta(_ cur: UInt64, _ prev: UInt64) -> UInt64 { cur >= prev ? cur - prev : 0 }
 
+struct ByteCounters {
+    let input: UInt64
+    let output: UInt64
+}
+
+struct CounterBaselines<Key: Hashable> {
+    private var previous: [Key: ByteCounters]?
+
+    mutating func sample(_ current: [Key: ByteCounters]?) -> ByteCounters? {
+        defer { previous = current }
+        guard let current = current, let previous = previous else { return nil }
+        var input: UInt64 = 0, output: UInt64 = 0
+        for (key, counters) in current {
+            guard let old = previous[key] else { continue }
+            input &+= delta(counters.input, old.input)
+            output &+= delta(counters.output, old.output)
+        }
+        return ByteCounters(input: input, output: output)
+    }
+}
+
 // MARK: - Samplers
 
 final class CPUSampler {
@@ -84,7 +105,11 @@ final class CPUSampler {
                 host_statistics(hostPort, HOST_CPU_LOAD_INFO, $0, &count)
             }
         }
-        guard kr == KERN_SUCCESS else { return nil }
+        guard kr == KERN_SUCCESS else {
+            prev = nil
+            NSLog("ResourcesBar: CPU sample failed: \(kr)")
+            return nil
+        }
         defer { prev = info }
         guard let p = prev else { return nil }
         let c = info.cpu_ticks, q = p.cpu_ticks
@@ -128,16 +153,16 @@ enum MemorySampler {
 /// Total bytes in/out across physical interfaces (en*, cellular), using 64-bit counters.
 final class NetworkSampler {
     private var buffer = [UInt8]()
-    private var prev: (UInt64, UInt64)?
+    private var baselines = CounterBaselines<String>()
 
     func sample() -> (inBytes: UInt64, outBytes: UInt64)? {
         var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
         var len = 0
-        guard sysctl(&mib, 6, nil, &len, nil, 0) == 0 else { return nil }
+        guard sysctl(&mib, 6, nil, &len, nil, 0) == 0 else { return failedSample() }
         if buffer.count < len { buffer = [UInt8](repeating: 0, count: len + 1024) }
-        guard sysctl(&mib, 6, &buffer, &len, nil, 0) == 0 else { return nil }
+        guard sysctl(&mib, 6, &buffer, &len, nil, 0) == 0 else { return failedSample() }
 
-        var ib: UInt64 = 0, ob: UInt64 = 0
+        var counters: [String: ByteCounters] = [:]
         var name = [CChar](repeating: 0, count: Int(IF_NAMESIZE))
         buffer.withUnsafeBytes { raw in
             var offset = 0
@@ -151,39 +176,55 @@ final class NetworkSampler {
                        if_indextoname(UInt32(m.ifm_index), &name) != nil {
                         let n = String(cString: name)
                         if n.hasPrefix("en") || n.hasPrefix("pdp_ip") {
-                            ib &+= m.ifm_data.ifi_ibytes
-                            ob &+= m.ifm_data.ifi_obytes
+                            counters["\(m.ifm_index):\(n)"] = ByteCounters(
+                                input: m.ifm_data.ifi_ibytes, output: m.ifm_data.ifi_obytes)
                         }
                     }
                 }
                 offset += Int(hdr.ifm_msglen)
             }
         }
-        defer { prev = (ib, ob) }
-        guard let p = prev else { return nil }
-        return (delta(ib, p.0), delta(ob, p.1))
+        guard let change = baselines.sample(counters) else { return nil }
+        return (change.input, change.output)
+    }
+
+    private func failedSample() -> (inBytes: UInt64, outBytes: UInt64)? {
+        NSLog("ResourcesBar: network sample failed: \(errno)")
+        _ = baselines.sample(nil)
+        return nil
     }
 }
 
 /// Total bytes read/written across block storage drivers.
 final class DiskIOSampler {
-    private var prev: (UInt64, UInt64)?
+    private var baselines = CounterBaselines<UInt64>()
 
     func sample() -> (read: UInt64, write: UInt64)? {
         var iter: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOBlockStorageDriver"), &iter) == KERN_SUCCESS else { return nil }
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOBlockStorageDriver"), &iter) == KERN_SUCCESS else {
+            return failedSample()
+        }
         defer { IOObjectRelease(iter) }
-        var r: UInt64 = 0, w: UInt64 = 0
+        var counters: [UInt64: ByteCounters] = [:]
         while case let service = IOIteratorNext(iter), service != 0 {
             defer { IOObjectRelease(service) }
-            guard let stats = IORegistryEntryCreateCFProperty(service, "Statistics" as CFString, kCFAllocatorDefault, 0)?
-                .takeRetainedValue() as? NSDictionary else { continue }
-            r &+= (stats["Bytes (Read)"] as? NSNumber)?.uint64Value ?? 0
-            w &+= (stats["Bytes (Write)"] as? NSNumber)?.uint64Value ?? 0
+            var id: UInt64 = 0
+            guard IORegistryEntryGetRegistryEntryID(service, &id) == KERN_SUCCESS,
+                  let stats = IORegistryEntryCreateCFProperty(service, "Statistics" as CFString, kCFAllocatorDefault, 0)?
+                    .takeRetainedValue() as? NSDictionary,
+                  let read = stats["Bytes (Read)"] as? NSNumber,
+                  let write = stats["Bytes (Write)"] as? NSNumber else { return failedSample() }
+            counters[id] = ByteCounters(input: read.uint64Value, output: write.uint64Value)
         }
-        defer { prev = (r, w) }
-        guard let p = prev else { return nil }
-        return (delta(r, p.0), delta(w, p.1))
+        guard IOIteratorIsValid(iter) != 0 else { return failedSample() }
+        guard let change = baselines.sample(counters) else { return nil }
+        return (change.input, change.output)
+    }
+
+    private func failedSample() -> (read: UInt64, write: UInt64)? {
+        NSLog("ResourcesBar: disk I/O sample failed; resetting baselines")
+        _ = baselines.sample(nil)
+        return nil
     }
 }
 
@@ -199,17 +240,34 @@ struct Volume {
 /// Network shares are skipped so a stale server can never stall the UI.
 enum DiskSpaceSampler {
     private static let keys: [URLResourceKey] = [
-        .volumeNameKey, .volumeIsLocalKey, .volumeTotalCapacityKey,
+        .volumeNameKey, .volumeTotalCapacityKey,
         .volumeAvailableCapacityKey, .volumeAvailableCapacityForImportantUsageKey,
     ]
 
+    static func localVolumePaths(_ mounts: UnsafeBufferPointer<statfs>) -> [String] {
+        mounts.compactMap { mount in
+            guard mount.f_flags & UInt32(MNT_LOCAL) != 0,
+                  mount.f_flags & UInt32(MNT_DONTBROWSE) == 0 else { return nil }
+            var path = mount.f_mntonname
+            return withUnsafeBytes(of: &path) {
+                String(decoding: $0.prefix(while: { $0 != 0 }), as: UTF8.self)
+            }
+        }
+    }
+
     static func sample() -> [Volume] {
-        let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys,
-                                                         options: [.skipHiddenVolumes]) ?? []
+        var mounts: UnsafeMutablePointer<statfs>?
+        let count = getmntinfo(&mounts, MNT_NOWAIT)
+        guard count > 0, let mounts = mounts else {
+            NSLog("ResourcesBar: mount enumeration failed: \(errno)")
+            return []
+        }
+        // MNT_NOWAIT reads cached kernel metadata without contacting any filesystem.
+        let paths = localVolumePaths(UnsafeBufferPointer(start: mounts, count: Int(count)))
         var volumes: [Volume] = []
-        for url in urls {
+        for path in paths {
+            let url = URL(fileURLWithPath: path)
             guard let v = try? url.resourceValues(forKeys: Set(keys)),
-                  v.volumeIsLocal == true,
                   let total = v.volumeTotalCapacity, total > 0 else { continue }
             // "Important usage" counts purgeable space as free (like Finder) but reports 0 on some
             // filesystems (e.g. read-only images), so take whichever is larger.
@@ -487,8 +545,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 }
 
+#if TESTING
+SamplerTests.main()
+#else
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.accessory)
 app.run()
+#endif
