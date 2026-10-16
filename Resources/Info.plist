@@ -10,6 +10,8 @@
 	<string>com.thorrsson.ResourcesBar</string>
 	<key>CFBundleExecutable</key>
 	<string>ResourcesBar</string>
+	<key>CFBundleIconFile</key>
+	<string>ResourcesBar</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

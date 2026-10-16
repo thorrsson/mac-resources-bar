@@ -14,7 +14,8 @@ Click the item for details: CPU user/system, memory and swap, network rates, spa
 
 ## Why it's light
 
-- Single Swift file using AppKit: no SwiftUI or assets. Sparkle handles updates.
+- Single Swift file using AppKit; the build generates a colorful resource-meter
+  app icon. Sparkle handles updates.
 - Metrics are read directly from the kernel: `host_statistics` (CPU/memory), `sysctl NET_RT_IFLIST2` (network, 64-bit counters), IOKit `IOBlockStorageDriver` (disk I/O), and volume resource values (disk space, refreshed every 30s and immediately on mount/unmount).
 - One timer (default 2s) with tolerance so macOS can coalesce wakeups. Polling pauses while the display sleeps, and the detail menu only updates while it's open.
 - The sampler runs at ~0% CPU. Sparkle's framework and update helpers are bundled
