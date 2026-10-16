@@ -313,6 +313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLogin(_:)), keyEquivalent: "")
 #if !TESTING
     private var updaterController: SPUStandardUpdaterController?
+    private var pendingUpdateVersion: String?
     private let checkForUpdatesItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
     private let automaticUpdatesItem = NSMenuItem(title: "Automatically Check for Updates", action: #selector(toggleAutomaticUpdates(_:)), keyEquivalent: "")
 #endif
@@ -337,7 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String,
            Data(base64Encoded: key)?.count == 32 {
             updaterController = SPUStandardUpdaterController(
-                startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil
+                startingUpdater: true, updaterDelegate: nil, userDriverDelegate: self
             )
         } else {
             NSLog("ResourcesBar: updates disabled because SUPublicEDKey is missing or invalid.")
@@ -430,6 +431,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             append(label, percent(v.fraction))
         }
         if title.length == 0 { title.append(coloredReading("RB", "")) }
+#if !TESTING
+        if pendingUpdateVersion != nil {
+            title.append(coloredReading("  Update Available", ""))
+        }
+#endif
         if let button = statusItem.button, !button.attributedTitle.isEqual(to: title) {
             button.attributedTitle = title
         }
@@ -542,7 +548,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         menuOpen = true
 #if !TESTING
-        checkForUpdatesItem.isEnabled = updaterController?.updater.canCheckForUpdates ?? false
+        checkForUpdatesItem.isEnabled = pendingUpdateVersion != nil || (updaterController?.updater.canCheckForUpdates ?? false)
         automaticUpdatesItem.state = updaterController?.updater.automaticallyChecksForUpdates == true ? .on : .off
 #endif
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -587,6 +593,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sender.state = svc.status == .enabled ? .on : .off
     }
 }
+
+#if !TESTING
+extension AppDelegate: SPUStandardUserDriverDelegate {
+    var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    func standardUserDriverShouldHandleShowingScheduledUpdate(
+        _ update: SUAppcastItem, andInImmediateFocus immediateFocus: Bool
+    ) -> Bool {
+        immediateFocus
+    }
+
+    func standardUserDriverWillHandleShowingUpdate(
+        _ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState
+    ) {
+        if !state.userInitiated {
+            setPendingUpdateVersion(update.displayVersionString)
+        }
+    }
+
+    func standardUserDriverDidReceiveUserAttention(forUpdate update: SUAppcastItem) {
+        setPendingUpdateVersion(nil)
+    }
+
+    func standardUserDriverWillFinishUpdateSession() {
+        setPendingUpdateVersion(nil)
+    }
+
+    private func setPendingUpdateVersion(_ version: String?) {
+        pendingUpdateVersion = version
+        checkForUpdatesItem.title = version.map { "Update Available (v\($0))…" } ?? "Check for Updates…"
+        checkForUpdatesItem.isEnabled = version != nil || (updaterController?.updater.canCheckForUpdates ?? false)
+        updateTitle()
+    }
+}
+#endif
 
 #if TESTING
 SamplerTests.main()

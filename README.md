@@ -82,6 +82,10 @@ Sparkle checks daily for updates from
 `https://github.com/thorrsson/mac-resources-bar/releases/latest/download/appcast.xml`.
 Users approve installation; silent installation is off by default. The menu
 provides **Check for Updates…** and **Automatically Check for Updates** controls.
+Scheduled updates also show **Update Available** in the menu bar and a
+versioned menu action, so prompts cannot go unnoticed behind other apps.
+Select that action to bring the pending update forward. The indicator clears
+when the update receives attention or its session ends.
 Keep the app in `/Applications`, not running from the disk image.
 
 Before the first Sparkle-enabled release, generate a signing key once:
