@@ -14,6 +14,8 @@
 #   NOTARY_API_ISSUER_ID +
 #   NOTARY_API_KEY_P8      an App Store Connect API key (path, PEM, or base64)
 #   REQUIRE_NOTARIZATION=1 fail instead of skipping notarization (CI sets this)
+#   SPARKLE_PUBLIC_ED_KEY + SPARKLE_PRIVATE_ED_KEY  matching update signing keys
+#   REQUIRE_SPARKLE=1     require update signing (release CI sets this)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -28,9 +30,17 @@ VERSION="${VERSION#v}"
   || die "'$VERSION' is not a valid CFBundleShortVersionString (e.g. 1.2.3)"
 
 BUILD_NUMBER="${BUILD_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
+[[ "$BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] || die "BUILD_NUMBER must be a positive integer"
+export BUILD_NUMBER
 APP=build/ResourcesBar.app
 DIST=dist
 DMG="$DIST/ResourcesBar-$VERSION.dmg"
+
+if [[ -n "${SPARKLE_PRIVATE_ED_KEY:-}" || "${REQUIRE_SPARKLE:-0}" == "1" ]]; then
+  [[ -n "${SPARKLE_PRIVATE_ED_KEY:-}" && -n "${SPARKLE_PUBLIC_ED_KEY:-}" ]] \
+    || die "SPARKLE_PUBLIC_ED_KEY and SPARKLE_PRIVATE_ED_KEY are required for update signing"
+  swift Scripts/validate-sparkle-keys.swift
+fi
 
 IDENTITY="${SIGNING_IDENTITY:-}"
 if [[ -z "$IDENTITY" ]]; then
@@ -109,4 +119,20 @@ else
 fi
 
 (cd "$DIST" && shasum -a 256 "$(basename "$DMG")" | tee "$(basename "$DMG").sha256")
+rm -f "$DIST/appcast.xml"
+if [[ -n "${SPARKLE_PRIVATE_ED_KEY:-}" ]]; then
+  log "Generating the signed Sparkle appcast"
+  # Isolate this release so stale local archives cannot enter the feed.
+  mkdir "$TEMP_DIR/updates"
+  cp "$DMG" "$TEMP_DIR/updates/"
+  printf '%s' "$SPARKLE_PRIVATE_ED_KEY" |
+    build/Sparkle-2.10.0/bin/generate_appcast \
+      --ed-key-file - --maximum-deltas 0 \
+      --download-url-prefix "https://github.com/thorrsson/mac-resources-bar/releases/download/v$VERSION/" \
+      --link "https://github.com/thorrsson/mac-resources-bar/releases/tag/v$VERSION" \
+      -o "$DIST/appcast.xml" "$TEMP_DIR/updates"
+  [[ -s "$DIST/appcast.xml" ]] || die "Sparkle did not generate an appcast"
+else
+  warn "skipping appcast generation; SPARKLE_PRIVATE_ED_KEY is unset."
+fi
 log "Done: $DMG"

@@ -1,6 +1,9 @@
 import AppKit
 import IOKit
 import ServiceManagement
+#if !TESTING
+import Sparkle
+#endif
 
 private let hostPort = mach_host_self()
 
@@ -308,6 +311,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var metricItems: [NSMenuItem] = []
     private var intervalItems: [NSMenuItem] = []
     private let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLogin(_:)), keyEquivalent: "")
+#if !TESTING
+    private var updaterController: SPUStandardUpdaterController?
+    private var pendingUpdateVersion: String?
+    private let checkForUpdatesItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+    private let automaticUpdatesItem = NSMenuItem(title: "Automatically Check for Updates", action: #selector(toggleAutomaticUpdates(_:)), keyEquivalent: "")
+#endif
 
     private let cpu = CPUSampler(), net = NetworkSampler(), diskIO = DiskIOSampler()
     private var snap = Snapshot()
@@ -325,6 +334,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         defaults.register(defaults: Dictionary(uniqueKeysWithValues: Metric.allCases.map { ($0.defaultsKey, true) }))
         statusItem.button?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         statusItem.button?.title = "…"
+#if !TESTING
+        if let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String,
+           Data(base64Encoded: key)?.count == 32 {
+            updaterController = SPUStandardUpdaterController(
+                startingUpdater: true, updaterDelegate: nil, userDriverDelegate: self
+            )
+        } else {
+            NSLog("ResourcesBar: updates disabled because SUPublicEDKey is missing or invalid.")
+        }
+#endif
         buildMenu()
         statusItem.menu = menu
 
@@ -412,6 +431,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             append(label, percent(v.fraction))
         }
         if title.length == 0 { title.append(coloredReading("RB", "")) }
+#if !TESTING
+        if pendingUpdateVersion != nil {
+            title.append(coloredReading("  Update Available", ""))
+        }
+#endif
         if let button = statusItem.button, !button.attributedTitle.isEqual(to: title) {
             button.attributedTitle = title
         }
@@ -509,16 +533,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         loginItem.target = self
         menu.addItem(loginItem)
         menu.addItem(.separator())
+#if !TESTING
+        checkForUpdatesItem.target = self
+        automaticUpdatesItem.target = self
+        checkForUpdatesItem.isEnabled = false
+        automaticUpdatesItem.isEnabled = updaterController != nil
+        menu.addItem(checkForUpdatesItem)
+        menu.addItem(automaticUpdatesItem)
+        menu.addItem(.separator())
+#endif
         menu.addItem(NSMenuItem(title: "Quit ResourcesBar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
     func menuWillOpen(_ menu: NSMenu) {
         menuOpen = true
+#if !TESTING
+        checkForUpdatesItem.isEnabled = pendingUpdateVersion != nil || (updaterController?.updater.canCheckForUpdates ?? false)
+        automaticUpdatesItem.state = updaterController?.updater.automaticallyChecksForUpdates == true ? .on : .off
+#endif
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         updateMenu()
     }
 
     func menuDidClose(_ menu: NSMenu) { menuOpen = false }
+
+#if !TESTING
+    @objc private func checkForUpdates(_ sender: NSMenuItem) {
+        updaterController?.checkForUpdates(sender)
+    }
+
+    @objc private func toggleAutomaticUpdates(_ sender: NSMenuItem) {
+        guard let updater = updaterController?.updater else { return }
+        updater.automaticallyChecksForUpdates.toggle()
+        sender.state = updater.automaticallyChecksForUpdates ? .on : .off
+    }
+#endif
 
     @objc private func toggleMetric(_ sender: NSMenuItem) {
         guard let m = Metric(rawValue: sender.tag) else { return }
@@ -544,6 +593,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sender.state = svc.status == .enabled ? .on : .off
     }
 }
+
+#if !TESTING
+extension AppDelegate: SPUStandardUserDriverDelegate {
+    var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    func standardUserDriverShouldHandleShowingScheduledUpdate(
+        _ update: SUAppcastItem, andInImmediateFocus immediateFocus: Bool
+    ) -> Bool {
+        immediateFocus
+    }
+
+    func standardUserDriverWillHandleShowingUpdate(
+        _ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState
+    ) {
+        if !state.userInitiated {
+            setPendingUpdateVersion(update.displayVersionString)
+        }
+    }
+
+    func standardUserDriverDidReceiveUserAttention(forUpdate update: SUAppcastItem) {
+        setPendingUpdateVersion(nil)
+    }
+
+    func standardUserDriverWillFinishUpdateSession() {
+        setPendingUpdateVersion(nil)
+    }
+
+    private func setPendingUpdateVersion(_ version: String?) {
+        pendingUpdateVersion = version
+        checkForUpdatesItem.title = version.map { "Update Available (v\($0))…" } ?? "Check for Updates…"
+        checkForUpdatesItem.isEnabled = version != nil || (updaterController?.updater.canCheckForUpdates ?? false)
+        updateTitle()
+    }
+}
+#endif
 
 #if TESTING
 SamplerTests.main()
