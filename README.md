@@ -59,6 +59,13 @@ reviewer and limit it to `v*` tags) with these secrets:
 | `NOTARY_API_ISSUER_ID` | App Store Connect issuer ID |
 | `NOTARY_API_KEY_P8` | `AuthKey_<id>.p8`, as PEM or base64 |
 
+To upload them, copy `.env.example` to `.env` (gitignored), fill it in, then:
+
+```sh
+./Scripts/setup-release-secrets.sh --dry-run   # validate without uploading
+./Scripts/setup-release-secrets.sh             # set them via gh secret set
+```
+
 ## Notes
 
 - Memory "used" matches Activity Monitor: app memory + wired + compressed.
