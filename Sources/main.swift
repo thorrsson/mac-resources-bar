@@ -25,6 +25,14 @@ private func compactRate(_ bytesPerSec: Double) -> String {
     return String(format: "%.1fG", m / 1024)
 }
 
+private func compactBytes(_ bytes: UInt64) -> String {
+    let m = Double(bytes) / 1_048_576
+    if m < 999.5 { return padLeft(String(format: "%.0fM", m), 5) }
+    let g = m / 1024
+    if g < 99.95 { return padLeft(String(format: "%.1fG", g), 5) }
+    return padLeft(String(format: "%.0fG", g), 5)
+}
+
 private let memFormatter: ByteCountFormatter = {
     let f = ByteCountFormatter()
     f.countStyle = .memory
@@ -263,7 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateTitle() {
         var parts: [String] = []
         if isShown(.cpu) { parts.append("CPU" + percent(snap.cpuUser + snap.cpuSystem)) }
-        if isShown(.memory) { parts.append("MEM" + percent(Double(snap.memUsed) / Double(MemorySampler.total))) }
+        if isShown(.memory) { parts.append("MEM " + compactBytes(snap.memUsed)) }
         if isShown(.network) { parts.append("↓" + compactRate(snap.netIn) + " ↑" + compactRate(snap.netOut)) }
         if isShown(.disk), snap.diskTotal > 0 { parts.append("DSK" + percent(Double(snap.diskUsed) / Double(snap.diskTotal))) }
         let title = parts.isEmpty ? "RB" : parts.joined(separator: "  ")

@@ -3,7 +3,7 @@
 A tiny macOS menu bar monitor for **CPU, Memory, Network and Disk**.
 
 ```
-CPU 11%  MEM 49%  ↓ 31K ↑259K  DSK 77%
+CPU 11%  MEM 15.7G  ↓ 31K ↑259K  DSK 77%
 ```
 
 Click the item for details (CPU user/system, memory + swap, network rates, disk space and disk I/O), to choose which metrics appear in the menu bar, to change the update interval, or to toggle launch at login.
