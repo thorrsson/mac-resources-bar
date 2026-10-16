@@ -18,10 +18,13 @@ if [ -n "${SPARKLE_PUBLIC_ED_KEY:-}" ]; then
 fi
 sh Scripts/fetch-sparkle.sh
 SPARKLE=build/Sparkle-2.10.0
+ICONSET=build/ResourcesBar.iconset
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
 ditto "$SPARKLE/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+swift Scripts/generate-app-icon.swift "$ICONSET"
+iconutil -c icns -o "$APP/Contents/Resources/ResourcesBar.icns" "$ICONSET"
 if [ -n "${SPARKLE_PUBLIC_ED_KEY:-}" ]; then
   /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_ED_KEY" "$APP/Contents/Info.plist"
 else
