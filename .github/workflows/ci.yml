@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # CFBundleVersion is the commit count
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Test
+        run: sh test.sh
+
+      # Unsigned (ad-hoc) here: the signing secrets belong to the release
+      # workflow, which forks must not reach. This proves packaging still works.
+      - name: Build app and disk image
+        env:
+          SIGNING_IDENTITY: '-'
+        run: ./Scripts/release.sh "0.0.0"
+
+      - name: Upload disk image
+        uses: actions/upload-artifact@v4
+        with:
+          name: ResourcesBar-dmg
+          path: dist/*.dmg
+          if-no-files-found: error

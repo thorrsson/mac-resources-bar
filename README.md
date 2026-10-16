@@ -24,7 +24,7 @@ Click the item for details: CPU user/system, memory and swap, network rates, spa
 Requires the Xcode Command Line Tools (`xcode-select --install`) and macOS 13+.
 
 ```sh
-./build.sh           # -> build/ResourcesBar.app (universal, ad-hoc signed)
+./build.sh           # -> build/ResourcesBar.app (universal, ad-hoc signed; see build.sh for VERSION/SIGNING_IDENTITY)
 ./build.sh install   # also copies it to /Applications
 open build/ResourcesBar.app
 ```
@@ -34,6 +34,37 @@ open build/ResourcesBar.app
 Run `sh test.sh` for sampler regression tests and a live sampling smoke test.
 The tests cover device addition/removal, counter resets, failed-read recovery,
 and filtering remote or hidden mounts before querying capacity.
+
+## Releases
+
+`./Scripts/release.sh 1.2.3` builds `dist/ResourcesBar-1.2.3.dmg` plus a
+`.sha256`. It signs with the first Developer ID Application identity in your
+keychain (Hardened Runtime + secure timestamp), and notarizes and staples the
+image when notary credentials are set (`NOTARY_PROFILE`, or
+`NOTARY_API_KEY_ID` + `NOTARY_API_ISSUER_ID` + `NOTARY_API_KEY_P8`). Without an
+identity or credentials it falls back to an unnotarized build.
+
+CI (`.github/workflows/ci.yml`) runs the tests and builds an ad-hoc signed disk
+image on every push and pull request. Pushing a `v*` tag runs
+`.github/workflows/release.yml`, which signs, notarizes, and publishes the disk
+image to a GitHub release. It needs a `release` environment (give it a required
+reviewer and limit it to `v*` tags) with these secrets:
+
+| Secret | Value |
+| --- | --- |
+| `MACOS_CERTIFICATE_P12` | Developer ID Application cert + key, `base64 < cert.p12 \| tr -d '\n'` |
+| `MACOS_CERTIFICATE_PASSWORD` | Password for the `.p12` |
+| `MACOS_SIGNING_IDENTITY` | e.g. `Developer ID Application: Name (TEAMID)` |
+| `NOTARY_API_KEY_ID` | App Store Connect API key ID |
+| `NOTARY_API_ISSUER_ID` | App Store Connect issuer ID |
+| `NOTARY_API_KEY_P8` | `AuthKey_<id>.p8`, as PEM or base64 |
+
+To upload them, copy `.env.example` to `.env` (gitignored), fill it in, then:
+
+```sh
+./Scripts/setup-release-secrets.sh --dry-run   # validate without uploading
+./Scripts/setup-release-secrets.sh             # set them via gh secret set
+```
 
 ## Notes
 
