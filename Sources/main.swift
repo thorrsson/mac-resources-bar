@@ -16,15 +16,23 @@ private func percent(_ v: Double) -> String {
     padLeft("\(Int((v * 100).rounded()))%", 4)
 }
 
-private func coloredReading(_ label: String, _ value: String) -> NSAttributedString {
-    let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+private func coloredReading(
+    _ label: String, _ value: String,
+    font: NSFont = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+) -> NSAttributedString {
     let text = NSMutableAttributedString(string: label, attributes: [
-        .font: font, .foregroundColor: NSColor.labelColor,
+        .font: font, .foregroundColor: NSColor.systemOrange,
     ])
     text.append(NSAttributedString(string: value, attributes: [
-        .font: font, .foregroundColor: NSColor.systemBlue,
+        .font: font, .foregroundColor: NSColor.labelColor,
     ]))
     return text
+}
+
+private func setMenuReading(_ item: NSMenuItem, _ label: String, _ value: String) {
+    let text = coloredReading(label, value, font: .menuFont(ofSize: 0))
+    item.title = text.string
+    item.attributedTitle = text
 }
 
 private func compactRate(_ bytesPerSec: Double) -> String {
@@ -353,17 +361,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateMenu() {
         let total = MemorySampler.total
-        cpuItem.title = String(format: "CPU: %.0f%%  (user %.0f%%, system %.0f%%)",
-                               (snap.cpuUser + snap.cpuSystem) * 100, snap.cpuUser * 100, snap.cpuSystem * 100)
-        memItem.title = String(format: "Memory: %@ of %@  (%.0f%%)",
-                               mem(snap.memUsed), mem(total), Double(snap.memUsed) / Double(total) * 100)
-        swapItem.title = "Swap used: " + mem(snap.swapUsed)
-        netItem.title = "Network: ↓ \(rate(snap.netIn))   ↑ \(rate(snap.netOut))"
+        setMenuReading(cpuItem, "CPU: ", String(format: "%.0f%%  (user %.0f%%, system %.0f%%)",
+                       (snap.cpuUser + snap.cpuSystem) * 100, snap.cpuUser * 100, snap.cpuSystem * 100))
+        setMenuReading(memItem, "Memory: ", String(format: "%@ of %@  (%.0f%%)",
+                       mem(snap.memUsed), mem(total), Double(snap.memUsed) / Double(total) * 100))
+        setMenuReading(swapItem, "Swap used: ", mem(snap.swapUsed))
+        setMenuReading(netItem, "Network: ", "↓ \(rate(snap.netIn))   ↑ \(rate(snap.netOut))")
         for (item, v) in zip(volumeItems, snap.volumes) {
-            item.title = String(format: "%@: %@ of %@ used  (%@ free, %.0f%%)",
-                                v.name, file(v.used), file(v.total), file(v.total - v.used), v.fraction * 100)
+            setMenuReading(item, v.name + ": ", String(format: "%@ of %@ used  (%@ free, %.0f%%)",
+                           file(v.used), file(v.total), file(v.total - v.used), v.fraction * 100))
         }
-        diskIOItem.title = "Disk I/O (all disks): read \(rate(snap.diskRead))   write \(rate(snap.diskWrite))"
+        if snap.volumes.isEmpty, let item = volumeItems.first {
+            setMenuReading(item, "Disks: ", "none")
+        }
+        setMenuReading(diskIOItem, "Disk I/O (all disks): ",
+                       "read \(rate(snap.diskRead))   write \(rate(snap.diskWrite))")
     }
 
     /// Recreates the per-volume rows and the "Menu Bar Disk" picker after mounts/unmounts.
