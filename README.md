@@ -12,6 +12,13 @@ appearance-aware text color for readability. Settings retain native menu styling
 
 Click the item for details: CPU user/system, memory and swap, network rates, space for **every mounted disk** (startup disk, external drives, mounted disk images), and total disk I/O. The menu also lets you choose which metrics appear in the menu bar, pick which disk the menu bar shows (**Menu Bar Disk**), change the update interval, and turn on launch at login.
 
+Enable **Condensed Menu Bar** in the menu to save horizontal space with smaller,
+9-point text arranged in two balanced rows. Network arrows stay together, and
+only your selected metrics are shown. With just one metric selected, it is
+centered on a single small-text row. The setting is saved across launches;
+turn it off to restore the standard single-row layout. The detail menu stays
+full size in either mode.
+
 ## Why it's light
 
 - Single Swift file using AppKit; the build generates a colorful resource-meter
@@ -37,8 +44,9 @@ open build/ResourcesBar.app
 Local builds without `SPARKLE_PUBLIC_ED_KEY` disable update controls and log why.
 Set that environment variable to your public key to enable updates locally.
 
-Run `sh test.sh` for sampler regression tests and a live sampling smoke test.
-The tests cover device addition/removal, counter resets, failed-read recovery,
+Run `sh test.sh` for menu bar layout and sampler regression tests and a live
+sampling smoke test. The tests cover condensed layouts for every metric
+selection, device addition/removal, counter resets, failed-read recovery,
 and filtering remote or hidden mounts before querying capacity.
 Run `swift Tests/UpdateReleaseTests.swift` to build an ad-hoc update with
 ephemeral keys and verify its bundle configuration, appcast, and DMG signature.
