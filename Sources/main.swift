@@ -38,6 +38,51 @@ private func setMenuReading(_ item: NSMenuItem, _ label: String, _ value: String
     item.attributedTitle = text
 }
 
+struct MenuBarPresentation {
+    let rows: [NSAttributedString]
+
+    init(readings: [NSAttributedString], condensed: Bool) {
+        func joined(_ readings: ArraySlice<NSAttributedString>) -> NSAttributedString {
+            let result = NSMutableAttributedString(string: "")
+            for reading in readings {
+                if result.length > 0 {
+                    result.append(NSAttributedString(string: "  ", attributes: reading.attributes(at: 0, effectiveRange: nil)))
+                }
+                result.append(reading)
+            }
+            return result
+        }
+
+        guard condensed, readings.count > 1 else {
+            rows = [joined(readings[...])]
+            return
+        }
+        let split = (1..<readings.count).min {
+            max(joined(readings[..<$0]).size().width, joined(readings[$0...]).size().width)
+                < max(joined(readings[..<$1]).size().width, joined(readings[$1...]).size().width)
+        }!
+        rows = [joined(readings[..<split]), joined(readings[split...])]
+    }
+
+    var accessibilityLabel: String { rows.map(\.string).joined(separator: "  ") }
+
+    var image: NSImage {
+        let size = NSSize(width: ceil(rows.map { $0.size().width }.max() ?? 0), height: 22)
+        // Draw within the status button rather than relying on its single-line title cell.
+        return NSImage(size: size, flipped: false) { rect in
+            let rowHeight = rect.height / CGFloat(rows.count)
+            for (index, row) in rows.enumerated() {
+                let bounds = row.size()
+                row.draw(at: NSPoint(
+                    x: floor((rect.width - bounds.width) / 2),
+                    y: rect.height - rowHeight * CGFloat(index + 1) + (rowHeight - bounds.height) / 2
+                ))
+            }
+            return true
+        }
+    }
+}
+
 private func compactRate(_ bytesPerSec: Double) -> String {
     let k = bytesPerSec / 1024
     if k < 999.5 { return padLeft(String(format: "%.0fK", k), 4) }
@@ -310,6 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let barDiskMenu = NSMenu()
     private var metricItems: [NSMenuItem] = []
     private var intervalItems: [NSMenuItem] = []
+    private let condensedItem = NSMenuItem(title: "Condensed Menu Bar", action: #selector(toggleCondensed(_:)), keyEquivalent: "")
     private let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLogin(_:)), keyEquivalent: "")
 #if !TESTING
     private var updaterController: SPUStandardUpdaterController?
@@ -413,31 +459,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func isShown(_ m: Metric) -> Bool { defaults.bool(forKey: m.defaultsKey) }
 
     private func updateTitle() {
-        let title = NSMutableAttributedString(string: "")
-        func append(_ label: String, _ value: String, separator: String = "  ") {
-            if title.length > 0 {
-                title.append(coloredReading(separator, ""))
-            }
-            title.append(coloredReading(label, value))
+        let condensed = defaults.bool(forKey: "condensedMenuBar")
+        let font = NSFont.monospacedDigitSystemFont(ofSize: condensed ? 9 : 11, weight: .regular)
+        var readings: [NSAttributedString] = []
+        func append(_ label: String, _ value: String) {
+            readings.append(coloredReading(label, value, font: font))
         }
         if isShown(.cpu) { append("CPU", percent(snap.cpuUser + snap.cpuSystem)) }
         if isShown(.memory) { append("MEM ", compactBytes(snap.memUsed)) }
         if isShown(.network) {
-            append("↓", compactRate(snap.netIn))
-            append("↑", compactRate(snap.netOut), separator: " ")
+            let network = NSMutableAttributedString(attributedString: coloredReading("↓", compactRate(snap.netIn), font: font))
+            network.append(coloredReading(" ↑", compactRate(snap.netOut), font: font))
+            readings.append(network)
         }
         if isShown(.disk), let v = barVolume {
             let label = v.path == "/" ? "DSK" : String(v.name.prefix(8)) + " "
             append(label, percent(v.fraction))
         }
-        if title.length == 0 { title.append(coloredReading("RB", "")) }
+        if readings.isEmpty { append("RB", "") }
 #if !TESTING
         if pendingUpdateVersion != nil {
-            title.append(coloredReading("  Update Available", ""))
+            append("Update Available", "")
         }
 #endif
-        if let button = statusItem.button, !button.attributedTitle.isEqual(to: title) {
-            button.attributedTitle = title
+        let presentation = MenuBarPresentation(readings: readings, condensed: condensed)
+        guard let button = statusItem.button else { return }
+        button.setAccessibilityLabel(presentation.accessibilityLabel)
+        if condensed {
+            button.attributedTitle = NSAttributedString(string: "")
+            button.image = presentation.image
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleNone
+        } else {
+            button.image = nil
+            button.imagePosition = .noImage
+            let title = presentation.rows[0]
+            if !button.attributedTitle.isEqual(to: title) {
+                button.attributedTitle = title
+            }
         }
     }
 
@@ -513,6 +572,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         showItem.submenu = showMenu
         menu.addItem(showItem)
 
+        condensedItem.target = self
+        condensedItem.state = defaults.bool(forKey: "condensedMenuBar") ? .on : .off
+        menu.addItem(condensedItem)
+
         let barDiskItem = NSMenuItem(title: "Menu Bar Disk", action: nil, keyEquivalent: "")
         barDiskItem.submenu = barDiskMenu
         menu.addItem(barDiskItem)
@@ -574,6 +637,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let show = !isShown(m)
         defaults.set(show, forKey: m.defaultsKey)
         sender.state = show ? .on : .off
+        updateTitle()
+    }
+
+    @objc private func toggleCondensed(_ sender: NSMenuItem) {
+        let condensed = !defaults.bool(forKey: "condensedMenuBar")
+        defaults.set(condensed, forKey: "condensedMenuBar")
+        sender.state = condensed ? .on : .off
         updateTitle()
     }
 

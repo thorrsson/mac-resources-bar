@@ -39,7 +39,48 @@ struct SamplerTests {
         return value
     }
 
+    static func testMenuBarPresentation() {
+        let metrics = ["CPU100%", "MEM  99.9G", "↓999M ↑999M", "External 100%"]
+        func readings(_ texts: [String], size: CGFloat) -> [NSAttributedString] {
+            texts.map {
+                NSAttributedString(string: $0, attributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular),
+                    .foregroundColor: NSColor.labelColor,
+                ])
+            }
+        }
+        for selection in 0..<16 {
+            let selected = metrics.enumerated().compactMap { selection & (1 << $0.offset) != 0 ? $0.element : nil }
+            let texts = selected.isEmpty ? ["RB"] : selected
+            let standard = MenuBarPresentation(readings: readings(texts, size: 11), condensed: false)
+            let condensed = MenuBarPresentation(readings: readings(texts, size: 9), condensed: true)
+            precondition(standard.rows.count == 1)
+            precondition(standard.rows[0].string == texts.joined(separator: "  "))
+            precondition(condensed.rows.count == (texts.count > 1 ? 2 : 1))
+            precondition(condensed.accessibilityLabel == standard.accessibilityLabel)
+            precondition(condensed.image.size.height <= 22)
+            precondition(condensed.rows.allSatisfy {
+                $0.size().height <= condensed.image.size.height / CGFloat(condensed.rows.count)
+            })
+            precondition(condensed.image.size.width < standard.rows[0].size().width)
+            precondition(condensed.image.tiffRepresentation != nil)
+            if selection == 15 {
+                precondition(condensed.image.size.width < standard.rows[0].size().width * 0.6)
+            }
+        }
+        let update = MenuBarPresentation(readings: readings(metrics + ["Update Available"], size: 9), condensed: true)
+        precondition(update.rows.count == 2)
+        precondition(update.accessibilityLabel.contains("Update Available"))
+        precondition(update.accessibilityLabel.contains("↓999M ↑999M"))
+        let label = NSAttributedString(string: "CPU", attributes: [.foregroundColor: NSColor.systemOrange])
+        let colored = MenuBarPresentation(readings: [label, label], condensed: true)
+        precondition(colored.rows.allSatisfy {
+            $0.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == .systemOrange
+        })
+    }
+
     static func main() {
+        testMenuBarPresentation()
         testBaselines("1:en0", "2:en1")
         testBaselines(UInt64(100), UInt64(200))
 
@@ -65,6 +106,6 @@ struct SamplerTests {
         let volumes = DiskSpaceSampler.sample()
         precondition(volumes.contains { $0.path == "/" })
         precondition(volumes.allSatisfy { $0.total > 0 && $0.used <= $0.total })
-        print("Sampler regressions and live sampling passed.")
+        print("Menu bar layout, sampler regressions and live sampling passed.")
     }
 }
