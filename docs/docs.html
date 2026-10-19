@@ -1,0 +1,13 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="assets/style.css"><title>ResourcesBar Docs</title></head><body><header><strong>ResourcesBar</strong><nav><a href="index.html">Home</a><a href="docs.html">Docs</a><a href="https://github.com/thorrsson/mac-resources-bar">GitHub</a></nav></header><main><h1>Documentation</h1>
+<h2>Install</h2><p>Download the latest disk image from <a href="https://github.com/thorrsson/mac-resources-bar/releases/latest">Releases</a>, drag ResourcesBar to <code>/Applications</code>, and open it. Requires macOS 13+.</p>
+<h2>Using the menu</h2><ul><li>Click the menu bar item for CPU user/system, memory and swap, network rates, every mounted disk, and disk I/O.</li>
+<li>Choose which metrics appear in the menu bar.</li><li><strong>Menu Bar Disk</strong> picks which disk the bar shows.</li>
+<li>Change the update interval (default 2s).</li><li><strong>Condensed Menu Bar</strong> uses smaller two-row text; the setting persists.</li>
+<li>Enable <strong>Launch at Login</strong> (works best from <code>/Applications</code>).</li></ul>
+<figure class="app-shot"><img src="assets/menu-bar.png" alt="ResourcesBar showing live CPU, memory, network, and disk metrics in the macOS menu bar"><figcaption>Live menu bar readout; values vary as your Mac works.</figcaption></figure>
+<h2>Build from source</h2><p>Needs the Xcode Command Line Tools (<code>xcode-select --install</code>).</p>
+<pre>./build.sh           # build/ResourcesBar.app
+./build.sh install   # also copy to /Applications
+sh test.sh           # tests</pre>
+<h2>Releases</h2><p>Pushing a <code>v*</code> tag runs the release workflow, which signs, notarizes and publishes the disk image. See the <a href="https://github.com/thorrsson/mac-resources-bar#releases">README</a> for required secrets.</p>
+</main><footer>ResourcesBar &middot; <a href="https://github.com/thorrsson/mac-resources-bar">Source on GitHub</a></footer></body></html>
