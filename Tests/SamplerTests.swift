@@ -87,13 +87,31 @@ struct SamplerTests {
         let mounts = [
             mount("/", MNT_LOCAL),
             mount("/Volumes/External", MNT_LOCAL),
+            mount("/Volumes/Installer", MNT_LOCAL | MNT_RDONLY),
+            mount("/Volumes/Writable Image", MNT_LOCAL),
+            mount("/Volumes/Read-only Drive", MNT_LOCAL | MNT_RDONLY),
+            mount("/Volumes/Unknown", MNT_LOCAL),
             mount("/Volumes/SMB", 0),
             mount("/Volumes/NFS", 0),
             mount("/System/Volumes/Data", MNT_LOCAL | MNT_DONTBROWSE),
         ]
+        var queriedPaths: [String] = []
         mounts.withUnsafeBufferPointer {
-            precondition(DiskSpaceSampler.localVolumePaths($0) == ["/", "/Volumes/External"])
+            let paths = DiskSpaceSampler.localVolumePaths($0) { path in
+                queriedPaths.append(path)
+                switch path {
+                case "/Volumes/Installer", "/Volumes/Writable Image": return "Disk Image"
+                case "/": return "APPLE SSD"
+                case "/Volumes/Unknown": return nil
+                default: return "External SSD"
+                }
+            }
+            precondition(paths == ["/", "/Volumes/External", "/Volumes/Read-only Drive", "/Volumes/Unknown"])
         }
+        precondition(queriedPaths == [
+            "/", "/Volumes/External", "/Volumes/Installer", "/Volumes/Writable Image",
+            "/Volumes/Read-only Drive", "/Volumes/Unknown",
+        ])
         // Exercise the real Mach/sysctl/IOKit paths as well as deterministic regressions.
         let cpu = CPUSampler(), network = NetworkSampler(), disks = DiskIOSampler()
         _ = cpu.sample()
@@ -106,6 +124,10 @@ struct SamplerTests {
         let volumes = DiskSpaceSampler.sample()
         precondition(volumes.contains { $0.path == "/" })
         precondition(volumes.allSatisfy { $0.total > 0 && $0.used <= $0.total })
+        for excludedPath in CommandLine.arguments.dropFirst() {
+            precondition(FileManager.default.fileExists(atPath: excludedPath))
+            precondition(!volumes.contains { $0.path == excludedPath })
+        }
         print("Menu bar layout, sampler regressions and live sampling passed.")
     }
 }
