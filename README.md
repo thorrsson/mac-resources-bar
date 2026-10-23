@@ -10,7 +10,7 @@ Menu bar labels (including network arrows and disk names) and click-open metric
 labels share the appearance-aware system orange color. Values use the standard
 appearance-aware text color for readability. Settings retain native menu styling.
 
-Click the item for details: CPU user/system, memory and swap, network rates, space for **every mounted disk** (startup disk, external drives, mounted disk images), and total disk I/O. The menu also lets you choose which metrics appear in the menu bar, pick which disk the menu bar shows (**Menu Bar Disk**), change the update interval, and turn on launch at login.
+Click the item for details: CPU user/system, memory and swap, network rates, space for **mounted local disks** (startup disk and external drives, excluding disk images), and total disk I/O. The menu also lets you choose which metrics appear in the menu bar, pick which disk the menu bar shows (**Menu Bar Disk**), change the update interval, and turn on launch at login.
 
 Enable **Condensed Menu Bar** in the menu to save horizontal space with smaller,
 9-point text arranged in two balanced rows. Network arrows stay together, and
@@ -47,7 +47,7 @@ Set that environment variable to your public key to enable updates locally.
 Run `sh test.sh` for menu bar layout and sampler regression tests and a live
 sampling smoke test. The tests cover condensed layouts for every metric
 selection, device addition/removal, counter resets, failed-read recovery,
-and filtering remote or hidden mounts before querying capacity.
+and filtering remote, hidden, or disk-image mounts before querying capacity.
 Run `swift Tests/UpdateReleaseTests.swift` to build an ad-hoc update with
 ephemeral keys and verify its bundle configuration, appcast, and DMG signature.
 This replaces the local `0.0.0` build artifacts; its keys are for testing only.
@@ -131,6 +131,8 @@ published; building this branch alone does not enable production updates.
 - Network and disk I/O deltas are tracked per device. Newly connected devices
   are primed without counting lifetime traffic; failed reads clear baselines
   so recovery does not inflate rates.
-- Disks: all visible local volumes are listed, and network shares are skipped so an unresponsive server can't stall the app. Purgeable space counts as free, the same way Finder does. If the selected menu bar disk is ejected, the menu bar falls back to the startup disk.
+- Disks: visible local volumes are listed, excluding mounted disk images (including writable images). Network shares are skipped so an unresponsive server can't stall the app. Purgeable space counts as free, the same way Finder does. If the selected menu bar disk is ejected or excluded, the menu bar falls back to the startup disk.
 - Mounts are filtered using cached kernel mount flags (`MNT_NOWAIT`) before
   reading volume names or capacity; remote volumes receive no resource queries.
+  Disk Arbitration identifies disk images by their device model, not their
+  volume name, filesystem, or read-only status.

@@ -1,4 +1,5 @@
 import AppKit
+import DiskArbitration
 import IOKit
 import ServiceManagement
 #if !TESTING
@@ -284,23 +285,37 @@ struct Volume {
     var fraction: Double { total > 0 ? Double(used) / Double(total) : 0 }
 }
 
-/// Space usage for every visible local volume (startup disk, external drives, mounted images).
-/// Network shares are skipped so a stale server can never stall the UI.
+/// Space usage for visible local volumes, excluding disk images.
+/// Network shares are skipped before querying metadata so a stale server can never stall the UI.
 enum DiskSpaceSampler {
     private static let keys: [URLResourceKey] = [
         .volumeNameKey, .volumeTotalCapacityKey,
         .volumeAvailableCapacityKey, .volumeAvailableCapacityForImportantUsageKey,
     ]
 
-    static func localVolumePaths(_ mounts: UnsafeBufferPointer<statfs>) -> [String] {
+    static func localVolumePaths(
+        _ mounts: UnsafeBufferPointer<statfs>,
+        deviceModel: (String) -> String?
+    ) -> [String] {
         mounts.compactMap { mount in
             guard mount.f_flags & UInt32(MNT_LOCAL) != 0,
                   mount.f_flags & UInt32(MNT_DONTBROWSE) == 0 else { return nil }
             var path = mount.f_mntonname
-            return withUnsafeBytes(of: &path) {
+            let mountPath = withUnsafeBytes(of: &path) {
                 String(decoding: $0.prefix(while: { $0 != 0 }), as: UTF8.self)
             }
+            guard deviceModel(mountPath) != "Disk Image" else { return nil }
+            return mountPath
         }
+    }
+
+    private static func deviceModel(for path: String, session: DASession) -> String? {
+        guard let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, URL(fileURLWithPath: path) as CFURL),
+              let description = DADiskCopyDescription(disk) as? [String: Any] else {
+            NSLog("ResourcesBar: disk description unavailable for \(path); retaining volume")
+            return nil
+        }
+        return description[kDADiskDescriptionDeviceModelKey as String] as? String
     }
 
     static func sample() -> [Volume] {
@@ -310,15 +325,21 @@ enum DiskSpaceSampler {
             NSLog("ResourcesBar: mount enumeration failed: \(errno)")
             return []
         }
+        guard let session = DASessionCreate(kCFAllocatorDefault) else {
+            NSLog("ResourcesBar: Disk Arbitration session creation failed")
+            return []
+        }
         // MNT_NOWAIT reads cached kernel metadata without contacting any filesystem.
-        let paths = localVolumePaths(UnsafeBufferPointer(start: mounts, count: Int(count)))
+        let paths = localVolumePaths(UnsafeBufferPointer(start: mounts, count: Int(count))) {
+            deviceModel(for: $0, session: session)
+        }
         var volumes: [Volume] = []
         for path in paths {
             let url = URL(fileURLWithPath: path)
             guard let v = try? url.resourceValues(forKeys: Set(keys)),
                   let total = v.volumeTotalCapacity, total > 0 else { continue }
             // "Important usage" counts purgeable space as free (like Finder) but reports 0 on some
-            // filesystems (e.g. read-only images), so take whichever is larger.
+            // filesystems, so take whichever is larger.
             let avail = max(Int(v.volumeAvailableCapacityForImportantUsage ?? 0), v.volumeAvailableCapacity ?? 0)
             let t = UInt64(total), a = UInt64(max(0, avail))
             volumes.append(Volume(path: url.path, name: v.volumeName ?? url.lastPathComponent,
