@@ -54,6 +54,15 @@ This replaces the local `0.0.0` build artifacts; its keys are for testing only.
 
 ## Releases
 
+The GitHub Pages home and install pages link directly to the latest release's
+universal DMG, resolved through GitHub's public releases API when the page loads.
+Both Intel and Apple Silicon Macs use the same image. Other platforms see a
+macOS-only availability message; there is no Windows executable.
+If JavaScript is disabled or the API is unavailable (including rate limits),
+the links still download the explicitly labeled 1.0.5 DMG. Update those fallback
+links and the failure message in `docs/assets/download.js` when retiring that release.
+Run `node --test Tests/DownloadLinksTests.cjs` for the site's download-link tests.
+
 `./Scripts/release.sh 1.2.3` builds `dist/ResourcesBar-1.2.3.dmg` plus a
 `.sha256`. It signs with the first Developer ID Application identity in your
 keychain (Hardened Runtime + secure timestamp), and notarizes and staples the
